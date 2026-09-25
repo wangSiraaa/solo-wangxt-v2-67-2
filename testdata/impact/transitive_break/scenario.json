@@ -1,0 +1,26 @@
+{
+  "name": "incompatible_change_locates_transitive_top_level",
+  "description": "base changes string id to int32 id (wire+json break). l1 locks base directly; l2 and top only reach base transitively. The break must be locatable at the top-level package through the reason chain.",
+  "register": [
+    {"package": "acme.base", "version": "v1", "dir": "base-v1"},
+    {"package": "acme.l1", "version": "v1", "dir": "l1-v1",
+      "expect_locks": [{"package": "acme.base", "version": "v1"}]},
+    {"package": "acme.l2", "version": "v1", "dir": "l2-v1",
+      "expect_locks": [{"package": "acme.l1", "version": "v1"}]},
+    {"package": "acme.top", "version": "v1", "dir": "top-v1",
+      "expect_locks": [{"package": "acme.l2", "version": "v1"}]},
+    {"package": "acme.base", "version": "v2", "dir": "base-v2"}
+  ],
+  "analyze": {
+    "package": "acme.base",
+    "base_version": "v1",
+    "candidate_version": "v2",
+    "verdict": "INCOMPATIBLE",
+    "repeat": 1,
+    "nodes": [
+      {"package": "acme.l1", "version": "v1", "status": "DIRECT_IMPACTED", "verdict": "INCOMPATIBLE", "exactly_paths": 1},
+      {"package": "acme.l2", "version": "v1", "status": "TRANSITIVE_IMPACTED", "verdict": "INCOMPATIBLE", "exactly_paths": 1},
+      {"package": "acme.top", "version": "v1", "status": "TRANSITIVE_IMPACTED", "verdict": "INCOMPATIBLE", "exactly_paths": 1}
+    ]
+  }
+}

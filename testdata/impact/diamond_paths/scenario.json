@@ -1,0 +1,29 @@
+{
+  "name": "diamond_dependency_single_node_multiple_paths",
+  "description": "A diamond (top locks billing and common; billing locks common) yields exactly one impacted record for top but two reason paths. A consumer that locks common but references the unchanged Code type is verified unaffected.",
+  "register": [
+    {"package": "acme.common", "version": "v1", "dir": "common-v1"},
+    {"package": "acme.billing", "version": "v1", "dir": "billing-v1",
+      "expect_locks": [{"package": "acme.common", "version": "v1"}]},
+    {"package": "acme.api", "version": "v1", "dir": "api-v1",
+      "expect_locks": [
+        {"package": "acme.billing", "version": "v1"},
+        {"package": "acme.common", "version": "v1"}
+      ]},
+    {"package": "acme.tax", "version": "v1", "dir": "tax-v1",
+      "expect_locks": [{"package": "acme.common", "version": "v1"}]},
+    {"package": "acme.common", "version": "v2", "dir": "common-v2"}
+  ],
+  "analyze": {
+    "package": "acme.common",
+    "base_version": "v1",
+    "candidate_version": "v2",
+    "verdict": "INCOMPATIBLE",
+    "repeat": 2,
+    "nodes": [
+      {"package": "acme.billing", "version": "v1", "status": "DIRECT_IMPACTED", "verdict": "INCOMPATIBLE", "exactly_paths": 1},
+      {"package": "acme.api", "version": "v1", "status": "DIRECT_IMPACTED", "verdict": "INCOMPATIBLE", "exactly_paths": 2},
+      {"package": "acme.tax", "version": "v1", "status": "VERIFIED_UNAFFECTED", "verdict": "COMPATIBLE", "exactly_paths": 1}
+    ]
+  }
+}

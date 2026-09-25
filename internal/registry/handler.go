@@ -13,6 +13,8 @@ const (
 	ProcedureCheckCompatibility = "/registry.v1.Registry/CheckCompatibility"
 	ProcedureDeclareConsumer    = "/registry.v1.Registry/DeclareConsumer"
 	ProcedureListVersions       = "/registry.v1.Registry/ListVersions"
+	ProcedureAnalyzeImpact      = "/registry.v1.Registry/AnalyzeImpact"
+	ProcedureGetDependencies    = "/registry.v1.Registry/GetDependencies"
 )
 
 // jsonCodec speaks application/json for plain Go structs, so the service
@@ -37,5 +39,9 @@ func (s *Service) Handler() (string, http.Handler) {
 		ProcedureDeclareConsumer, s.DeclareConsumer, connect.WithCodec(jsonCodec{})))
 	mux.Handle(ProcedureListVersions, connect.NewUnaryHandler(
 		ProcedureListVersions, s.ListVersions, connect.WithCodec(jsonCodec{})))
+	mux.Handle(ProcedureAnalyzeImpact, connect.NewUnaryHandler(
+		ProcedureAnalyzeImpact, s.AnalyzeImpact, connect.WithCodec(jsonCodec{})))
+	mux.Handle(ProcedureGetDependencies, connect.NewUnaryHandler(
+		ProcedureGetDependencies, s.GetDependencies, connect.WithCodec(jsonCodec{})))
 	return "/registry.v1.Registry/", mux
 }

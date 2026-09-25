@@ -1,0 +1,8 @@
+syntax = "proto3";
+package acme.top;
+
+import "l2/l2.proto";
+
+message Request {
+  acme.l2.Batch batch = 1;
+}

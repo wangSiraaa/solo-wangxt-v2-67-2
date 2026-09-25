@@ -1,0 +1,8 @@
+syntax = "proto3";
+package acme.l2;
+
+import "l1/l1.proto";
+
+message Batch {
+  repeated acme.l1.Envelope envelopes = 1;
+}

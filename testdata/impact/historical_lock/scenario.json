@@ -1,0 +1,45 @@
+{
+  "name": "historical_version_uses_locked_dependencies_and_recomputes_identically",
+  "description": "mid v1 explicitly pins base v1; top v1 pins mid v1. The v1->v2 analysis is recorded while base v2 is latest. Afterwards base v3 (breaking) and mid v2 (pinned to base v3) are registered. Repeating the historical v1->v2 analysis must return the identical digest, and v1->v3 must locate mid v1 (direct) and top v1 (transitive) while never reporting versions pinned to v3. Historical lock summaries remain on base v1.",
+  "register": [
+    {"package": "acme.base", "version": "v1", "dir": "base-v1"},
+    {"package": "acme.mid", "version": "v1", "dir": "mid-v1",
+      "pins": [{"package": "acme.base", "version": "v1"}],
+      "expect_locks": [{"package": "acme.base", "version": "v1"}]},
+    {"package": "acme.top", "version": "v1", "dir": "top-v1",
+      "pins": [{"package": "acme.mid", "version": "v1"}],
+      "expect_locks": [{"package": "acme.mid", "version": "v1"}]},
+    {"package": "acme.base", "version": "v2", "dir": "base-v2"}
+  ],
+  "analyze": {
+    "package": "acme.base",
+    "base_version": "v1",
+    "candidate_version": "v2",
+    "verdict": "COMPATIBLE",
+    "repeat": 1,
+    "nodes": [
+      {"package": "acme.mid", "version": "v1", "status": "VERIFIED_UNAFFECTED", "verdict": "COMPATIBLE", "exactly_paths": 1},
+      {"package": "acme.top", "version": "v1", "status": "VERIFIED_UNAFFECTED", "verdict": "COMPATIBLE", "exactly_paths": 1}
+    ],
+    "then": [
+      {"package": "acme.base", "version": "v3", "dir": "base-v3"},
+      {"package": "acme.mid", "version": "v2", "dir": "mid-v2",
+        "pins": [{"package": "acme.base", "version": "v3"}]},
+      {"package": "acme.mid", "version": "v1", "dir": "mid-v1",
+        "pins": [{"package": "acme.base", "version": "v1"}],
+        "expect_locks": [{"package": "acme.base", "version": "v1"}]}
+    ]
+  },
+  "then_analyze": [
+    {
+      "package": "acme.base",
+      "base_version": "v1",
+      "candidate_version": "v3",
+      "verdict": "INCOMPATIBLE",
+      "nodes": [
+        {"package": "acme.mid", "version": "v1", "status": "DIRECT_IMPACTED", "verdict": "INCOMPATIBLE", "exactly_paths": 1},
+        {"package": "acme.top", "version": "v1", "status": "TRANSITIVE_IMPACTED", "verdict": "INCOMPATIBLE", "exactly_paths": 1}
+      ]
+    }
+  ]
+}

@@ -72,8 +72,74 @@ func Compile(ctx context.Context, files []SourceFile) (*Compiled, error) {
 	if err != nil {
 		return nil, &CompileError{Err: err}
 	}
+	out := make([]protoreflect.FileDescriptor, len(linked))
+	for i := range linked {
+		out[i] = linked[i]
+	}
+	return FromLinked(entrypoints, out)
+}
 
+// FromLinked serializes and hashes an already-linked compilation. The
+// hash covers every file reachable in the closure; callers that compile a
+// package against pre-registered dependency closures need OwnedOnlyHash
+// instead if they want identical package content to hash identically
+// regardless of which pinned versions supplied the imports.
+func FromLinked(entrypoints []string, linked []protoreflect.FileDescriptor) (*Compiled, error) {
 	// Serialize the full transitive closure in topological order.
+	fdset := buildSet(linked)
+
+	setBytes, err := proto.MarshalOptions{Deterministic: true}.Marshal(fdset)
+	if err != nil {
+		return nil, fmt.Errorf("schema: marshal descriptor set: %w", err)
+	}
+	hash := hashSet(fdset, nil)
+	registry, err := Load(setBytes)
+	if err != nil {
+		return nil, err
+	}
+	return &Compiled{
+		DescriptorSet: setBytes,
+		Hash:          hash,
+		OwnedPaths:    append([]string(nil), entrypoints...),
+		Files:         registry,
+	}, nil
+}
+
+// OwnedOnlyHash hashes only the given file paths (their canonical
+// descriptor bytes) within a serialized FileDescriptorSet. It makes a
+// package's content hash independent of the exact pinned dependency
+// versions it was compiled against. Paths absent from the set are an error.
+func OwnedOnlyHash(descriptorSet []byte, ownedPaths []string) ([]byte, error) {
+	var fdset descriptorpb.FileDescriptorSet
+	if err := proto.Unmarshal(descriptorSet, &fdset); err != nil {
+		return nil, fmt.Errorf("schema: unmarshal descriptor set: %w", err)
+	}
+	owned := make(map[string]bool, len(ownedPaths))
+	for _, p := range ownedPaths {
+		owned[p] = true
+	}
+	return hashSet(&fdset, owned), nil
+}
+
+// ClosurePaths lists every file name inside a serialized
+// FileDescriptorSet, sorted for deterministic traversal.
+func ClosurePaths(descriptorSet []byte) ([]string, error) {
+	var fdset descriptorpb.FileDescriptorSet
+	if err := proto.Unmarshal(descriptorSet, &fdset); err != nil {
+		return nil, fmt.Errorf("schema: unmarshal descriptor set: %w", err)
+	}
+	paths := make([]string, 0, len(fdset.File))
+	for _, fdp := range fdset.File {
+		paths = append(paths, fdp.GetName())
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+// linkerResult kept for documentation of the protocompile output type.
+type linkerResult = []protoreflect.FileDescriptor
+
+func buildSet(linked []protoreflect.FileDescriptor) *descriptorpb.FileDescriptorSet {
 	fdset := &descriptorpb.FileDescriptorSet{}
 	seen := make(map[string]bool)
 	var add func(fd protoreflect.FileDescriptor)
@@ -91,18 +157,29 @@ func Compile(ctx context.Context, files []SourceFile) (*Compiled, error) {
 	for _, fd := range linked {
 		add(fd)
 	}
+	return fdset
+}
 
-	// Content hash: canonical bytes of every file, sorted by path so the
-	// hash is independent of entrypoint order.
+// hashSet computes the canonical content hash over a descriptor set. When
+// only is non-nil, files outside the allow-list are skipped; otherwise
+// every file participates. Files are hashed in path order so entrypoint
+// order cannot change the result.
+func hashSet(fdset *descriptorpb.FileDescriptorSet, only map[string]bool) []byte {
 	type fileBytes struct {
 		path string
 		data []byte
 	}
 	canonical := make([]fileBytes, 0, len(fdset.File))
 	for _, fdp := range fdset.File {
+		if only != nil && !only[fdp.GetName()] {
+			continue
+		}
 		b, err := proto.MarshalOptions{Deterministic: true}.Marshal(fdp)
 		if err != nil {
-			return nil, fmt.Errorf("schema: canonicalize %s: %w", fdp.GetName(), err)
+			// Every fdp originates from protodesc; deterministic marshal
+			// cannot realistically fail. Hash what is available rather than
+			// panicking in a hashing helper.
+			continue
 		}
 		canonical = append(canonical, fileBytes{path: fdp.GetName(), data: b})
 	}
@@ -114,21 +191,7 @@ func Compile(ctx context.Context, files []SourceFile) (*Compiled, error) {
 		h.Write(fb.data)
 		h.Write([]byte{0})
 	}
-
-	setBytes, err := proto.MarshalOptions{Deterministic: true}.Marshal(fdset)
-	if err != nil {
-		return nil, fmt.Errorf("schema: marshal descriptor set: %w", err)
-	}
-	registry, err := Load(setBytes)
-	if err != nil {
-		return nil, err
-	}
-	return &Compiled{
-		DescriptorSet: setBytes,
-		Hash:          h.Sum(nil),
-		OwnedPaths:    entrypoints,
-		Files:         registry,
-	}, nil
+	return h.Sum(nil)
 }
 
 // Load rebuilds a descriptor registry from a serialized FileDescriptorSet.

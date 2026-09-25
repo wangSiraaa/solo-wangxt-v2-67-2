@@ -1,0 +1,8 @@
+syntax = "proto3";
+package acme.top;
+
+import "mid/mid.proto";
+
+message T {
+  acme.mid.W w = 1;
+}

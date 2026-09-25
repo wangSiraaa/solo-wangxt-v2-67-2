@@ -1,0 +1,11 @@
+syntax = "proto3";
+package acme.common;
+
+message Money {
+  int64 units = 1;
+  string currency = 2;
+}
+
+message Code {
+  string value = 1;
+}

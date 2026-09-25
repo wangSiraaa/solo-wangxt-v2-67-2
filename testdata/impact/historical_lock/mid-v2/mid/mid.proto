@@ -1,0 +1,9 @@
+syntax = "proto3";
+package acme.mid;
+
+import "base/base.proto";
+
+message W {
+  acme.base.M m = 1;
+  int64 q = 2;
+}

@@ -1,0 +1,11 @@
+syntax = "proto3";
+package acme.dep;
+
+message Thing {
+  string name = 1;
+  string color = 2;
+}
+
+message Stamp {
+  string code = 1;
+}

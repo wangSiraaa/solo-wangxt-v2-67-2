@@ -1,0 +1,11 @@
+{
+  "name": "dependency_summary_mismatch_rejected",
+  "description": "The consumer pins common v1 but asserts a digest the registered version does not have. The lock is refused failed_precondition and nothing is stored.",
+  "register": [
+    {"package": "acme.common", "version": "v1", "dir": "common-v1"},
+    {"package": "acme.cons", "version": "v1", "dir": "consumer-v1",
+      "pins": [{"package": "acme.common", "version": "v1",
+                "digest": "0000000000000000000000000000000000000000000000000000000000000000"}],
+      "expect_rejected": true, "reject_code": "failed_precondition", "expect_missing": true}
+  ]
+}

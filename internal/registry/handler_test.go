@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -85,5 +86,102 @@ func TestHTTPEndToEnd(t *testing.T) {
 	}
 	if versions, ok := out["versions"].([]any); !ok || len(versions) != 1 {
 		t.Fatalf("versions = %v", out["versions"])
+	}
+
+	// --- Cross-package lock + impact analysis over HTTP ---
+	put := func(procedure string, body any) (int, map[string]any) {
+		t.Helper()
+		return post(procedure, body)
+	}
+	// Dependency package dep v1/v2.
+	code, out = put(ProcedureRegisterVersion, map[string]any{
+		"package": "acme.dep", "version": "v1",
+		"files": []map[string]string{{"path": "d/d.proto",
+			"content": `syntax = "proto3"; package acme.dep; message D { string a = 1; }`}},
+	})
+	if code != http.StatusOK {
+		t.Fatalf("register dep v1: status %d body %v", code, out)
+	}
+	// Consumer locks dep v1 and references D.
+	code, out = put(ProcedureRegisterVersion, map[string]any{
+		"package": "acme.cons", "version": "v1",
+		"files": []map[string]string{{"path": "c/c.proto",
+			"content": `syntax = "proto3"; package acme.cons; import "d/d.proto"; message C { acme.dep.D d = 1; }`}},
+	})
+	if code != http.StatusOK {
+		t.Fatalf("register cons v1: status %d body %v", code, out)
+	}
+	if locks, ok := out["locks"].([]any); !ok || len(locks) != 1 {
+		t.Fatalf("expected one lock in response, got %v", out["locks"])
+	} else {
+		lock := locks[0].(map[string]any)
+		if lock["package"] != "acme.dep" || lock["version"] != "v1" {
+			t.Fatalf("lock = %v", lock)
+		}
+	}
+	// GetDependencies.
+	code, out = put(ProcedureGetDependencies, map[string]any{"package": "acme.cons", "version": "v1"})
+	if code != http.StatusOK {
+		t.Fatalf("get dependencies: status %d body %v", code, out)
+	}
+	summary := out["summary"].(map[string]any)
+	if summary["digest"] == "" || len(summary["locks"].([]any)) != 1 {
+		t.Fatalf("summary = %v", summary)
+	}
+	// Breaking dep v2: string a -> int32 a.
+	code, out = put(ProcedureRegisterVersion, map[string]any{
+		"package": "acme.dep", "version": "v2",
+		"files": []map[string]string{{"path": "d/d.proto",
+			"content": `syntax = "proto3"; package acme.dep; message D { int32 a = 1; }`}},
+	})
+	if code != http.StatusOK {
+		t.Fatalf("register dep v2: status %d body %v", code, out)
+	}
+	// AnalyzeImpact: the consumer must show DIRECT_IMPACTED, and the
+	// second call must return the same input_digest.
+	code, out = put(ProcedureAnalyzeImpact, map[string]any{
+		"package": "acme.dep", "base_version": "v1", "candidate_version": "v2",
+	})
+	if code != http.StatusOK {
+		t.Fatalf("analyze: status %d body %v", code, out)
+	}
+	digest1 := out["input_digest"].(string)
+	an := out["analysis"].(map[string]any)
+	if an["verdict"] != "INCOMPATIBLE" {
+		t.Fatalf("analysis verdict = %v", an["verdict"])
+	}
+	nodes := an["nodes"].([]any)
+	if len(nodes) != 1 {
+		t.Fatalf("nodes = %v", nodes)
+	}
+	node := nodes[0].(map[string]any)
+	if node["package"] != "acme.cons" || node["status"] != "DIRECT_IMPACTED" {
+		t.Fatalf("node = %v", node)
+	}
+	paths := node["reason_paths"].([]any)
+	if len(paths) != 1 || len(paths[0].(map[string]any)["edges"].([]any)) != 1 {
+		t.Fatalf("reason paths = %v", paths)
+	}
+	code, out = put(ProcedureAnalyzeImpact, map[string]any{
+		"package": "acme.dep", "base_version": "v1", "candidate_version": "v2",
+	})
+	if code != http.StatusOK {
+		t.Fatalf("analyze repeat: status %d", code)
+	}
+	if out["input_digest"] != digest1 {
+		t.Fatalf("memoized digest changed: %s vs %s", out["input_digest"], digest1)
+	}
+
+	// Missing dependency: refused failed_precondition and names the path.
+	code, out = put(ProcedureRegisterVersion, map[string]any{
+		"package": "acme.orphan", "version": "v1",
+		"files": []map[string]string{{"path": "o/o.proto",
+			"content": `syntax = "proto3"; package acme.orphan; import "ghost/g.proto"; message O {}`}},
+	})
+	if code != http.StatusBadRequest {
+		t.Fatalf("missing dep: status %d body %v", code, out)
+	}
+	if !strings.Contains(out["message"].(string), "ghost/g.proto") {
+		t.Fatalf("missing dep message should name the path: %v", out["message"])
 	}
 }

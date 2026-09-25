@@ -1,0 +1,8 @@
+syntax = "proto3";
+package acme.user;
+
+import "dep/dep.proto";
+
+message Wrapper {
+  acme.dep.Form form = 1;
+}

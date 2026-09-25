@@ -1,0 +1,13 @@
+{
+  "name": "dependency_cycle_registered_atomically_without_dirty_data",
+  "description": "billing locks common. A later common version imports billing, which would close a package-level dependency cycle (common -> billing -> common). Registration is refused failed_precondition and no version/edge/path rows remain: common v3 is absent, billing's lock summary is still [common v1].",
+  "register": [
+    {"package": "acme.common", "version": "v1", "dir": "common-v1"},
+    {"package": "acme.billing", "version": "v1", "dir": "billing-v1",
+      "expect_locks": [{"package": "acme.common", "version": "v1"}]},
+    {"package": "acme.common", "version": "v3", "dir": "common-cycle-v3",
+      "expect_rejected": true, "reject_code": "failed_precondition", "expect_missing": true},
+    {"package": "acme.billing", "version": "v1", "dir": "billing-v1",
+      "expect_locks": [{"package": "acme.common", "version": "v1"}]}
+  ]
+}

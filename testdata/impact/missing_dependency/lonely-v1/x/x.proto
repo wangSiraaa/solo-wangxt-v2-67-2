@@ -1,0 +1,8 @@
+syntax = "proto3";
+package acme.lonely;
+
+import "ghost/ghost.proto";
+
+message X {
+  int32 n = 1;
+}

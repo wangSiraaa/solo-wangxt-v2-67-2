@@ -28,6 +28,37 @@ service Registry {
 
   // ListVersions returns every registered version of a package.
   rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);
+
+  // AnalyzeImpact compares two registered versions of a package and walks
+  // the reverse dependency graph (built from the immutable locks stored
+  // with every version). It returns directly impacted, transitively
+  // impacted and verified-unaffected dependent package versions, each
+  // with its reason paths. Results are memoized by a digest of the exact
+  // registry snapshot: repeating the same input returns the same result,
+  // and historical analyses stay reproducible after newer versions exist.
+  rpc AnalyzeImpact(AnalyzeImpactRequest) returns (AnalyzeImpactResponse);
+
+  // GetDependencies returns the locked dependency summary (package,
+  // version, digest tuples and the summary digest) stored with one
+  // immutable version.
+  rpc GetDependencies(GetDependenciesRequest) returns (GetDependenciesResponse);
+}
+
+// Pin fixes one imported package to an exact registered version. When
+// digest is present it must match that version's content digest, else the
+// registration is refused. Without a pin the newest registered version
+// of the imported package is used.
+message Pin {
+  string package = 1;
+  string version = 2;
+  string digest = 3; // optional lockfile-style verification
+}
+
+// Lock is one resolved, verified dependency edge stored with a version.
+message Lock {
+  string package = 1;
+  string version = 2;
+  string digest = 3;
 }
 
 message ProtoFile {
@@ -63,6 +94,7 @@ message RegisterVersionRequest {
   string base_version = 4;          // default: latest registered
   repeated Sample samples = 5;
   bool require_compatible = 6;
+  repeated Pin pins = 7; // explicit dependency pins; default = latest
 }
 
 message RegisterVersionResponse {
@@ -72,6 +104,8 @@ message RegisterVersionResponse {
   bool already_existed = 4;
   string base_version = 5;
   Report compatibility = 6;
+  repeated Lock locks = 7;
+  string lock_digest = 8;
 }
 
 message CheckRequest {
@@ -126,4 +160,61 @@ message VersionMeta {
 message ListVersionsResponse {
   string package = 1;
   repeated VersionMeta versions = 2;
+}
+
+message GetDependenciesRequest {
+  string package = 1;
+  string version = 2;
+}
+
+message DependencySummary {
+  string package = 1;
+  string version = 2;
+  repeated Lock locks = 3;
+  string digest = 4;
+}
+
+message GetDependenciesResponse {
+  DependencySummary summary = 1;
+}
+
+message AnalyzeImpactRequest {
+  string package = 1;
+  string base_version = 2;
+  string candidate_version = 3;
+}
+
+message EdgeReason {
+  string from = 1;
+  string to = 2;
+  string kind = 3;    // DIRECT | TRANSIT | VERIFIED_CLEAN
+  string verdict = 4; // COMPATIBLE | NEEDS_REVIEW | INCOMPATIBLE
+  repeated string symbols = 5;
+}
+
+message ReasonPath {
+  repeated string path = 1;  // dependent -> ... -> changed package
+  repeated EdgeReason edges = 2;
+}
+
+message ImpactNode {
+  string package = 1;
+  string version = 2;
+  string status = 3; // DIRECT_IMPACTED | TRANSITIVE_IMPACTED | VERIFIED_UNAFFECTED
+  string verdict = 4;
+  repeated ReasonPath reason_paths = 5;
+}
+
+message ImpactAnalysis {
+  string package = 1;
+  string base_version = 2;
+  string candidate_version = 3;
+  string verdict = 4;
+  repeated Finding findings = 5;
+  repeated ImpactNode nodes = 6;
+}
+
+message AnalyzeImpactResponse {
+  string input_digest = 1;
+  ImpactAnalysis analysis = 2;
 }

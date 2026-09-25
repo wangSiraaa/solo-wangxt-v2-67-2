@@ -1,0 +1,9 @@
+syntax = "proto3";
+package acme.userclean;
+
+import "dep/dep.proto";
+
+message Box {
+  acme.dep.Stamp stamp = 1;
+  string note = 2;
+}

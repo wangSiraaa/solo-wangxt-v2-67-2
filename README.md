@@ -9,21 +9,38 @@
 
 ```
 cmd/server        ConnectRPC 服务入口（纯后端，无管理页面）
-cmd/compatcheck   命令行：回归用例运行器 + 两棵 proto 树的临时比对
+cmd/compatcheck   命令行：单树回归用例、跨包依赖锁/影响场景、两棵 proto 树临时比对
 internal/schema   protocompile 封装：编译 → 描述符集 → 内容哈希 → 重新加载
+internal/deps     跨包依赖锁：import 解析、固定到已登记版本、锁摘要、环检测、按锁编译
+internal/impact   反向依赖图传递影响：直接/传递/经验证不受影响、原因路径、输入摘要
 internal/compat   兼容性判定核心（字段号复用 / 保留删除 / 类型变化 / 枚举默认值 / 样例载荷）
 internal/registry ConnectRPC 处理器、Store 接口、PostgreSQL 实现、内存实现
-internal/regress  文件型回归用例运行器（CLI 与 go test 共用）
-testdata/cases    回归案例：嵌套导入、oneof 迁移、同名不同包……
+internal/regress  文件型回归用例运行器（CLI 与 go test 共用；含跨包场景）
+testdata/cases    单树回归案例：嵌套导入、oneof 迁移、同名不同包……
+testdata/impact   跨包场景：菱形依赖、传递定位、无关升级、依赖环、缺失/摘要不符、历史复现
 api/registry/v1   服务契约（ConnectRPC，当前手写 handler + JSON codec，无需 codegen）
 ```
 
 - **解析**：`github.com/bufbuild/protocompile`，嵌套导入、菱形导入、well-known
   types 均由编译器解析；判断在 `protoreflect` 描述符上进行。
-- **传输**：ConnectRPC（connect 协议 + JSON codec），四个方法：
-  `RegisterVersion` / `CheckCompatibility` / `DeclareConsumer` / `ListVersions`。
-- **存储**：PostgreSQL 存包、不可变版本（描述符集 + 内容哈希）、兼容性报告、
-  使用方声明（consumer declarations）。`STORE=memory` 可本地冒烟（不持久化）。
+- **跨包依赖锁**：登记版本时先解析 descriptor 中的 `import`，每个外部依赖固定到
+  已登记的不可变包版本（可在 `pins` 中显式指定版本与摘要，否则固定为最新登记
+  版本），并严格按这些版本的描述符闭包编译。版本落库时保存 `(package,
+  version, digest)` 锁边与锁摘要 `lock_digest`。依赖缺失、环或摘要不匹配一律
+  拒绝且不留任何脏数据。
+- **传递影响分析**：`AnalyzeImpact` 比较某包新旧版本（本包 finding），再沿版本
+  锁定的反向依赖图传播，输出 `DIRECT_IMPACTED`（直接锁到旧版且引用了变更面）、
+  `TRANSITIVE_IMPACTED`（只经由其它受影响版本到达）与 `VERIFIED_UNAFFECTED`
+  （锁定旧版但引用面经证据核对未受影响）三类节点，每个节点一条记录、附全部不同
+  原因路径（菱形依赖保留多条路径）。结果以"输入快照摘要"做内容寻址落
+  PostgreSQL：同一输入永远返回同一结果；历史分析只依赖旧版锁定的子图，最新依赖
+  更新后重算仍可复现。
+- **传输**：ConnectRPC（connect 协议 + JSON codec），六个方法：
+  `RegisterVersion` / `CheckCompatibility` / `DeclareConsumer` / `ListVersions`
+  / `AnalyzeImpact` / `GetDependencies`。
+- **存储**：PostgreSQL 存包、不可变版本（描述符集 + 内容哈希 + 锁摘要）、
+  路径归属、依赖边、兼容性报告、使用方声明、内容寻址的影响分析结果。
+  `STORE=memory` 可本地冒烟（不持久化）。
 
 ## 判定模型
 
@@ -96,10 +113,62 @@ curl -s localhost:8080/registry.v1.Registry/CheckCompatibility -H 'Content-Type:
 }'
 ```
 
+## 跨包依赖锁与传递影响
+
+被依赖包必须**先登记**；登记上游时，服务从 descriptor 中解析 `import`，按文件
+路径归属找到所属包，并把每个依赖固定到不可变版本（默认最新，可用 `pins`
+显式固定版本并校验摘要）：
+
+```bash
+# 1) 先登记基础包
+curl -s localhost:8080/registry.v1.Registry/RegisterVersion -H 'Content-Type: application/json' -d '{
+  "package": "acme.common", "version": "v1",
+  "files": [{"path": "base/common.proto", "content": "syntax = \"proto3\"; package acme.common; message Money { string currency = 1; }"}]
+}'
+# 2) 登记 billing（import base/common.proto），响应回显锁定的 (package,version,digest)
+curl -s localhost:8080/registry.v1.Registry/RegisterVersion -H 'Content-Type: application/json' -d '{
+  "package": "acme.billing", "version": "v1",
+  "files": [{"path": "middle/invoice.proto", "content": "syntax = \"proto3\"; package acme.billing; import \"base/common.proto\"; message Line { acme.common.Money amount = 1; }"}]
+}'
+# 显式固定版本 + 锁摘要校验（lockfile 式）：摘要不符直接 failed_precondition
+#   "pins": [{"package": "acme.common", "version": "v1", "digest": "<sha256>"}]
+
+# 3) 查询某版本当时锁定的依赖摘要
+curl -s localhost:8080/registry.v1.Registry/GetDependencies -H 'Content-Type: application/json' -d '{
+  "package": "acme.billing", "version": "v1"
+}'
+
+# 4) 登记不兼容的 common v2（currency: string -> int32）
+curl -s localhost:8080/registry.v1.Registry/RegisterVersion -H 'Content-Type: application/json' -d '{
+  "package": "acme.common", "version": "v2",
+  "files": [{"path": "base/common.proto", "content": "syntax = \"proto3\"; package acme.common; message Money { int32 currency = 1; }"}]
+}'
+
+# 5) 传递影响分析：本包 finding + 反向依赖图，每个节点只出现一次，原因路径全保留
+curl -s localhost:8080/registry.v1.Registry/AnalyzeImpact -H 'Content-Type: application/json' -d '{
+  "package": "acme.common", "base_version": "v1", "candidate_version": "v2"
+}'
+```
+
+拒绝规则（均为 `failed_precondition`，登记事务整体回滚，不留版本/路径/依赖边）：
+
+- import 的路径没有任何已登记包提供（依赖缺失）；
+- 显式 pin 的版本不存在，或 pin 携带的摘要与登记内容不一致（摘要不匹配）；
+- 新登记会闭合包级依赖环（如 A 锁 B、B 又锁 A）。
+
+分析结果中节点状态：`DIRECT_IMPACTED` / `TRANSITIVE_IMPACTED` /
+`VERIFIED_UNAFFECTED`；`reason_paths` 给出每条原因链与边上的证据符号。菱形
+依赖（同一目标经两条链到达）只产生一条目标记录但保留多条路径；未锁定旧版的
+包（例如只锁了新版）不会出现，引用面未变更的锁定方会被显式标记为
+`VERIFIED_UNAFFECTED` 而不是沉默。分析按输入快照内容寻址：重复请求返回同一
+`input_digest` 与同一结果，历史版本始终使用当时锁定的依赖，即使依赖后来发布了
+新版本。
+
 ## 命令行回归
 
 ```bash
-go run ./cmd/compatcheck run testdata/cases     # 全部回归案例
+go run ./cmd/compatcheck run testdata/cases      # 全部单树回归案例
+go run ./cmd/compatcheck impact testdata/impact   # 跨包依赖锁/传递影响场景
 go run ./cmd/compatcheck check -old A -new B -format text   # 临时比对两棵 proto 树
 go test ./...                                    # 单元测试 + 同一套回归案例
 ```
@@ -109,9 +178,23 @@ go test ./...                                    # 单元测试 + 同一套回�
 枚举默认值变化、类型变化矩阵与样例载荷。期望未列出的 WARN/FAIL 会使案例失败——
 沉默不算通过。
 
+`testdata/impact` 下每个场景是 `scenario.json` 加各包版本的 proto 目录，通过
+内存版登记服务真实驱动 RegisterVersion/AnalyzeImpact，覆盖：
+
+| 场景 | 验收点 |
+|---|---|
+| `diamond_paths` | 菱形依赖只产生一条目标记录，但保留两条原因路径；引用未变更类型的锁定方为 `VERIFIED_UNAFFECTED` |
+| `transitive_break` | 依赖包不兼容变更沿 l1→l2→top 传递定位到顶层，直接/传递分类正确 |
+| `unrelated_upgrade` | 只引用未变更类型的锁定方经验证不受影响；不锁该包的包完全不出现（不误报） |
+| `cycle_reject` | 依赖环登记被原子拒绝，版本/路径/边均不留脏数据，既有锁摘要不变 |
+| `missing_dependency` | import 无对应已登记包时拒绝，无版本落库 |
+| `digest_mismatch` | pin 摘要与登记内容不一致时拒绝，无版本落库 |
+| `historical_lock` | 历史版本始终使用当时锁定依赖；新依赖发布后重算，输入摘要与结果完全一致；v1→v3 只命中锁定 v1 的消费者 |
+
 ## 测试
 
 ```bash
 go test ./...                    # 全部（PostgreSQL 集成测试在无 DATABASE_URL 时跳过）
-DATABASE_URL=postgres://... go test ./internal/registry/ -run TestPGStore
+DATABASE_URL='postgres://postgres@localhost:5433/registry?sslmode=disable&host=/tmp' \
+  go test ./internal/registry/   # 含锁存储、原子环拒绝、影响结果落库的端到端 PG 用例
 ```

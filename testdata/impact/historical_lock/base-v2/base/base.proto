@@ -1,0 +1,7 @@
+syntax = "proto3";
+package acme.base;
+
+message M {
+  string a = 1;
+  string b = 2;
+}

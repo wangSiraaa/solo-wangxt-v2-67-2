@@ -1,0 +1,8 @@
+{
+  "name": "missing_dependency_rejected",
+  "description": "A package that imports a path provided by no registered package and does not submit it is refused before anything is stored.",
+  "register": [
+    {"package": "acme.lonely", "version": "v1", "dir": "lonely-v1",
+      "expect_rejected": true, "reject_code": "failed_precondition", "expect_missing": true}
+  ]
+}

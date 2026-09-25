@@ -1,0 +1,7 @@
+syntax = "proto3";
+package acme.dep;
+
+message Form {
+  string email = 1;
+  string phone = 2;
+}

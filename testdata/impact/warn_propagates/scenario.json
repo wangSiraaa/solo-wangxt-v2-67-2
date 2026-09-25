@@ -1,0 +1,23 @@
+{
+  "name": "needs_review_change_propagates_as_needs_review",
+  "description": "dep moves Form.email into a oneof: evidence cannot prove it safe, so the local verdict and the propagated impact are NEEDS_REVIEW, not INCOMPATIBLE. user is DIRECT_IMPACTED and top is TRANSITIVE_IMPACTED, both NEEDS_REVIEW.",
+  "register": [
+    {"package": "acme.dep", "version": "v1", "dir": "dep-v1"},
+    {"package": "acme.user", "version": "v1", "dir": "user-v1",
+      "expect_locks": [{"package": "acme.dep", "version": "v1"}]},
+    {"package": "acme.top", "version": "v1", "dir": "top-v1",
+      "expect_locks": [{"package": "acme.user", "version": "v1"}]},
+    {"package": "acme.dep", "version": "v2", "dir": "dep-v2"}
+  ],
+  "analyze": {
+    "package": "acme.dep",
+    "base_version": "v1",
+    "candidate_version": "v2",
+    "verdict": "NEEDS_REVIEW",
+    "repeat": 1,
+    "nodes": [
+      {"package": "acme.user", "version": "v1", "status": "DIRECT_IMPACTED", "verdict": "NEEDS_REVIEW", "exactly_paths": 1},
+      {"package": "acme.top", "version": "v1", "status": "TRANSITIVE_IMPACTED", "verdict": "NEEDS_REVIEW", "exactly_paths": 1}
+    ]
+  }
+}

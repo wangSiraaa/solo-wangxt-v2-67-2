@@ -1,0 +1,22 @@
+{
+  "name": "unrelated_upgrade_no_false_positive",
+  "description": "dep breaks Thing.color (string -> int32). userclean locks dep but references only the unchanged Stamp type: it is reverse-reachable and verified unaffected, never flagged. userother does not lock dep at all and must not appear. Upgrading an unrelated surface produces no false positives.",
+  "register": [
+    {"package": "acme.dep", "version": "v1", "dir": "dep-v1"},
+    {"package": "acme.userclean", "version": "v1", "dir": "user-clean-v1",
+      "expect_locks": [{"package": "acme.dep", "version": "v1"}]},
+    {"package": "acme.userother", "version": "v1", "dir": "user-other-v1",
+      "expect_locks": []},
+    {"package": "acme.dep", "version": "v2", "dir": "dep-v2"}
+  ],
+  "analyze": {
+    "package": "acme.dep",
+    "base_version": "v1",
+    "candidate_version": "v2",
+    "verdict": "INCOMPATIBLE",
+    "repeat": 1,
+    "nodes": [
+      {"package": "acme.userclean", "version": "v1", "status": "VERIFIED_UNAFFECTED", "verdict": "COMPATIBLE", "exactly_paths": 1}
+    ]
+  }
+}
