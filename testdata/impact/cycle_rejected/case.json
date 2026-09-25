@@ -1,0 +1,19 @@
+{
+  "name": "cycle_rejected",
+  "description": "cycb depends on cyca; cyca v2 tries to depend on cycb, closing the cycle. The registration must be rejected atomically: no v2, no locks, path ownership untouched.",
+  "registrations": [
+    {"package": "acme.cyca", "version": "v1", "dir": "a_v1"},
+    {"package": "acme.cycb", "version": "v1", "dir": "b_v1"},
+    {"package": "acme.cyca", "version": "v2", "dir": "a_v2", "expect_error": "dependency cycle"}
+  ],
+  "expect": {
+    "versions": {
+      "acme.cyca": ["v1"],
+      "acme.cycb": ["v1"]
+    },
+    "dependencies": {
+      "acme.cyca@v1": [],
+      "acme.cycb@v1": ["acme.cyca@v1"]
+    }
+  }
+}

@@ -1,0 +1,3 @@
+syntax = "proto3";
+package acme.solo;
+message Alone { string id = 1; string extra = 2; }

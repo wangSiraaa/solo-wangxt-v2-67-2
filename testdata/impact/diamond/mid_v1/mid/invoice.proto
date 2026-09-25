@@ -1,0 +1,4 @@
+syntax = "proto3";
+package acme.mid;
+import "base/common.proto";
+message Invoice { acme.base.Shared shared = 1; string note = 2; }

@@ -5,25 +5,30 @@
 同时检查二进制线路编码与 JSON 映射两个维度；**无法证明安全的部分一律标为
 `NEEDS_REVIEW`，绝不笼统标成通过**。
 
+跨包场景下，登记即锁定：每个 import 固定到已登记的不可变版本并记录摘要；
+变更可以沿反向依赖图做传递影响分析，定位到具体符号。
+
 ## 架构
 
 ```
 cmd/server        ConnectRPC 服务入口（纯后端，无管理页面）
-cmd/compatcheck   命令行：回归用例运行器 + 两棵 proto 树的临时比对
+cmd/compatcheck   命令行：兼容性回归 + 依赖/影响回归 + 两棵 proto 树的临时比对
 internal/schema   protocompile 封装：编译 → 描述符集 → 内容哈希 → 重新加载
 internal/compat   兼容性判定核心（字段号复用 / 保留删除 / 类型变化 / 枚举默认值 / 样例载荷）
-internal/registry ConnectRPC 处理器、Store 接口、PostgreSQL 实现、内存实现
-internal/regress  文件型回归用例运行器（CLI 与 go test 共用）
-testdata/cases    回归案例：嵌套导入、oneof 迁移、同名不同包……
+internal/registry ConnectRPC 处理器、Store 接口、依赖锁、影响分析、PostgreSQL/内存实现
+internal/regress  文件型回归用例运行器（兼容性 + 依赖影响，CLI 与 go test 共用）
+testdata/cases    兼容性回归案例：嵌套导入、oneof 迁移、同名不同包……
+testdata/impact   依赖锁与影响分析回归案例：菱形依赖、传递断裂、依赖环……
 api/registry/v1   服务契约（ConnectRPC，当前手写 handler + JSON codec，无需 codegen）
 ```
 
 - **解析**：`github.com/bufbuild/protocompile`，嵌套导入、菱形导入、well-known
   types 均由编译器解析；判断在 `protoreflect` 描述符上进行。
-- **传输**：ConnectRPC（connect 协议 + JSON codec），四个方法：
-  `RegisterVersion` / `CheckCompatibility` / `DeclareConsumer` / `ListVersions`。
-- **存储**：PostgreSQL 存包、不可变版本（描述符集 + 内容哈希）、兼容性报告、
-  使用方声明（consumer declarations）。`STORE=memory` 可本地冒烟（不持久化）。
+- **传输**：ConnectRPC（connect 协议 + JSON codec），六个方法：
+  `RegisterVersion` / `CheckCompatibility` / `DeclareConsumer` / `ListVersions`
+  / `AnalyzeImpact` / `ListDependencies`。
+- **存储**：PostgreSQL 存包、不可变版本（描述符集 + 内容哈希）、依赖锁、
+  路径所有权、影响分析、兼容性报告、使用方声明。`STORE=memory` 可本地冒烟（不持久化）。
 
 ## 判定模型
 
@@ -58,6 +63,53 @@ api/registry/v1   服务契约（ConnectRPC，当前手写 handler + JSON codec�
 消费方声明自己读取的消息/字段与编码（wire/json/both），`CheckCompatibility`
 带上 `consumer` 后，报告会投影到该消费方的实际使用面：wire-only 消费者不受
 纯 JSON 破坏影响，反之亦然。
+
+## 跨包依赖锁
+
+`RegisterVersion` 时，提交的 `.proto` 只需包含本包文件。凡是不在提交文件、
+也不在 well-known types 中的 import，服务会按路径解析到**当前拥有该路径的
+已登记版本**（`path_owners` 表），用该版本落库的 descriptor 闭包参与编译——
+依赖内容永远来自登记时的不可变快照，而不是源码。编译成功后，每个直接依赖以
+`(dep_package, dep_version, dep_hash)` 的形式与版本**同事务**落库
+（`version_deps` 表），这就是锁。
+
+- **缺失拒绝**：import 路径没有任何已登记包拥有 → `failed_precondition`，
+  什么都不写。
+- **循环拒绝**：包级依赖环（A 依赖 B，而 B 的锁定闭包已含 A）→
+  `failed_precondition`，原子拒绝、不留脏数据（文件级环由编译器同样拒绝）。
+- **摘要不匹配拒绝**：锁定摘要与已登记内容摘要不一致 → 拒绝（版本不可变，
+  出现即意味着存储被篡改）。
+- **菱形版本冲突拒绝**：两条依赖链带入同一路径的不同内容（如 mid 锁 base v1、
+  side 锁 base v2）→ `failed_precondition`，要求先对齐菱形。
+- **历史可复现**：锁随版本不可变。`ListDependencies` 对历史版本永远返回登记时
+  的锁定，即使依赖已发布更新版本。版本的内容哈希只覆盖本包自有文件——依赖
+  更新后，同内容重登记仍是幂等成功，且不会改写旧锁。
+
+## 传递影响分析
+
+`AnalyzeImpact(package, base_version, head_version)` 先给出本包的兼容性报告，
+然后沿**反向依赖图**（`version_deps` 的反向边）评估每一个锁定该包的包版本：
+
+- 每个依赖包只评估一次（取其仍持有锁的最新版本），菱形依赖**只产生一条记录**，
+  但保留全部原因路径（`reason_paths`，如 `acme.base@v2 → acme.mid@v1 → acme.top@v1`）。
+- 评估基于该依赖自己的锁定世界：从它的自有文件出发，沿类型引用闭包找到它
+  实际触及的、属于被变更包的符号集合，再用这些符号过滤 findings；引用的符号
+  在新版本中被删除时，额外给出 `DEPENDENCY_SYMBOL_REMOVED`（FAIL）的实证。
+- 分类：`DIRECT`（一跳且受影响）、`TRANSITIVE`（多跳且受影响）、
+  `VERIFIED_UNAFFECTED`（经验证其引用面不受影响，或最新版本已锁定到 head）。
+- 依赖者锁定版本与 base 不同（锁的是更老版本）时，按"锁定版本 → head"重新
+  计算该依赖者的证据，保证判断对的是它自己的世界。
+- 分析结果按 `(package, base, head)` + 输入内容哈希落库（`impact_analyses`
+  表）；**重复分析同一输入返回同一存储结果**（`reused: true`），不重复计算。
+
+```bash
+curl -s localhost:8080/registry.v1.Registry/AnalyzeImpact -H 'Content-Type: application/json' -d '{
+  "package": "acme.base", "base_version": "v1", "head_version": "v2"
+}'
+curl -s localhost:8080/registry.v1.Registry/ListDependencies -H 'Content-Type: application/json' -d '{
+  "package": "acme.mid", "version": "v1"
+}'
+```
 
 ## 运行
 
@@ -99,7 +151,8 @@ curl -s localhost:8080/registry.v1.Registry/CheckCompatibility -H 'Content-Type:
 ## 命令行回归
 
 ```bash
-go run ./cmd/compatcheck run testdata/cases     # 全部回归案例
+go run ./cmd/compatcheck run testdata/cases      # 兼容性回归案例
+go run ./cmd/compatcheck impact testdata/impact  # 依赖锁 / 影响分析回归案例
 go run ./cmd/compatcheck check -old A -new B -format text   # 临时比对两棵 proto 树
 go test ./...                                    # 单元测试 + 同一套回归案例
 ```
@@ -109,9 +162,18 @@ go test ./...                                    # 单元测试 + 同一套回�
 枚举默认值变化、类型变化矩阵与样例载荷。期望未列出的 WARN/FAIL 会使案例失败——
 沉默不算通过。
 
+`testdata/impact` 下每个案例是一串跨包登记步骤（每步一棵 proto 树，可声明
+`expect_error` 断言拒绝）加一次影响分析期望：结论、每个受影响包的分类
+（DIRECT/TRANSITIVE/VERIFIED_UNAFFECTED）、原因路径集合、findings，以及精确的
+版本列表与依赖锁。运行器对每个案例自动执行两次分析，断言第二次命中存储结果
+（`reused: true`）且内容一致——可复现性是每个案例的固有断言。
+
 ## 测试
 
 ```bash
 go test ./...                    # 全部（PostgreSQL 集成测试在无 DATABASE_URL 时跳过）
-DATABASE_URL=postgres://... go test ./internal/registry/ -run TestPGStore
+DATABASE_URL=postgres://... go test ./internal/registry/ -run 'TestPGStore|TestImpactCasesOnPostgres'
 ```
+
+`TestImpactCasesOnPostgres` 会把 `testdata/impact` 的全部案例在真实 PostgreSQL
+上重跑一遍，验证依赖图与分析结果在两种存储实现下行为一致。

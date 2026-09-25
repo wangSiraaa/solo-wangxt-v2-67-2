@@ -1,0 +1,32 @@
+{
+  "name": "transitive_chain",
+  "description": "base deletes Money, which top only reaches through mid.Line. The break must be located at the top of the chain with the removed symbol named.",
+  "registrations": [
+    {"package": "acme.base", "version": "v1", "dir": "base_v1"},
+    {"package": "acme.mid", "version": "v1", "dir": "mid_v1"},
+    {"package": "acme.top", "version": "v1", "dir": "top_v1"},
+    {"package": "acme.base", "version": "v2", "dir": "base_v2"}
+  ],
+  "analyze": {"package": "acme.base", "base_version": "v1", "head_version": "v2"},
+  "expect": {
+    "verdict": "NEEDS_REVIEW",
+    "impacts": [
+      {
+        "package": "acme.mid", "impact": "DIRECT",
+        "reason_paths": [["acme.base", "acme.mid"]],
+        "findings": [
+          {"code": "MESSAGE_REMOVED", "path": "acme.base.Money"},
+          {"code": "DEPENDENCY_SYMBOL_REMOVED", "path": "acme.base.Money", "severity": "FAIL"}
+        ]
+      },
+      {
+        "package": "acme.top", "impact": "TRANSITIVE",
+        "reason_paths": [["acme.base", "acme.mid", "acme.top"]],
+        "findings": [
+          {"code": "MESSAGE_REMOVED", "path": "acme.base.Money"},
+          {"code": "DEPENDENCY_SYMBOL_REMOVED", "path": "acme.base.Money", "severity": "FAIL"}
+        ]
+      }
+    ]
+  }
+}

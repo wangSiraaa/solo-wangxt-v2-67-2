@@ -15,6 +15,13 @@ service Registry {
   // idempotent no-op. When a base version exists, the response carries an
   // evidence-based compatibility report. With require_compatible, a proven
   // INCOMPATIBLE version is refused before anything is stored.
+  //
+  // Cross-package imports are resolved against the registry itself: every
+  // import not satisfied by the submitted files or the well-known types is
+  // pinned to the registered version currently owning that path, and the
+  // pin (package, version, content digest) is stored with the version.
+  // Missing dependencies, dependency cycles, digest mismatches and diamond
+  // version conflicts are rejected atomically (FailedPrecondition).
   rpc RegisterVersion(RegisterVersionRequest) returns (RegisterVersionResponse);
 
   // CheckCompatibility compares a registered base version against another
@@ -28,6 +35,18 @@ service Registry {
 
   // ListVersions returns every registered version of a package.
   rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);
+
+  // AnalyzeImpact compares base->head of a package and walks the reverse
+  // dependency graph: every package version holding a lock on the package
+  // is classified DIRECT, TRANSITIVE or VERIFIED_UNAFFECTED, with the
+  // reason paths leading to it. Analyses are persisted per exact input;
+  // repeating one returns the stored result (reused=true).
+  rpc AnalyzeImpact(AnalyzeImpactRequest) returns (AnalyzeImpactResponse);
+
+  // ListDependencies returns the dependency locks captured when the given
+  // version was registered. Locks are immutable: historical versions
+  // always report the dependencies they were registered against.
+  rpc ListDependencies(ListDependenciesRequest) returns (ListDependenciesResponse);
 }
 
 message ProtoFile {
@@ -126,4 +145,57 @@ message VersionMeta {
 message ListVersionsResponse {
   string package = 1;
   repeated VersionMeta versions = 2;
+}
+
+// --- cross-package dependency locking & transitive impact analysis ---
+
+message LockedDep {
+  string package = 1;
+  string version = 2;
+  string content_hash = 3; // hex digest captured when the lock was taken
+}
+
+message PathHop {
+  string package = 1;
+  string version = 2;
+}
+
+// ReasonPath is one dependency chain from the changed package to an
+// affected package. Diamonds yield several reason paths for one record.
+message ReasonPath {
+  repeated PathHop hops = 1;
+}
+
+message PackageImpact {
+  string package = 1;
+  string version = 2;  // the dependent version that was evaluated
+  string impact = 3;   // DIRECT | TRANSITIVE | VERIFIED_UNAFFECTED
+  repeated ReasonPath reason_paths = 4;
+  repeated Finding findings = 5; // findings relevant to this dependent
+}
+
+message AnalyzeImpactRequest {
+  string package = 1;
+  string base_version = 2;
+  string head_version = 3;
+}
+
+message AnalyzeImpactResponse {
+  string package = 1;
+  string base_version = 2;
+  string head_version = 3;
+  Report report = 4; // the package's own base->head report
+  repeated PackageImpact impacts = 5;
+  bool reused = 6;   // true when the stored analysis was returned
+}
+
+message ListDependenciesRequest {
+  string package = 1;
+  string version = 2;
+}
+
+message ListDependenciesResponse {
+  string package = 1;
+  string version = 2;
+  repeated LockedDep dependencies = 3;
 }

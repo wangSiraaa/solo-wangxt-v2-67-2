@@ -1,0 +1,4 @@
+syntax = "proto3";
+package acme.picky;
+import "base/common.proto";
+message View { acme.base.Other other = 1; }

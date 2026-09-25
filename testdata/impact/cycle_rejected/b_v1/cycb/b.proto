@@ -1,0 +1,4 @@
+syntax = "proto3";
+package acme.cycb;
+import "cyca/a.proto";
+message B { acme.cyca.A a = 1; }

@@ -37,7 +37,7 @@ func (s *PGStore) ensurePackage(ctx context.Context, tx *sql.Tx, name string) (i
 	return id, nil
 }
 
-func (s *PGStore) PutVersion(ctx context.Context, v Version) (bool, error) {
+func (s *PGStore) PutVersion(ctx context.Context, v Version, deps []DepLock) (bool, error) {
 	owned, err := json.Marshal(v.OwnedPaths)
 	if err != nil {
 		return false, err
@@ -64,7 +64,8 @@ func (s *PGStore) PutVersion(ctx context.Context, v Version) (bool, error) {
 		// New row inserted.
 	case errors.Is(err, sql.ErrNoRows):
 		// (package, version) exists: identical content is an idempotent
-		// retry; different content is rejected, never overwritten.
+		// retry; different content is rejected, never overwritten. Locks
+		// and path ownership stay as first written.
 		var existingHash []byte
 		qerr := tx.QueryRowContext(ctx, `
 			SELECT content_hash FROM versions WHERE package_id = $1 AND version = $2`,
@@ -78,6 +79,28 @@ func (s *PGStore) PutVersion(ctx context.Context, v Version) (bool, error) {
 		return false, nil
 	default:
 		return false, fmt.Errorf("insert version: %w", err)
+	}
+
+	// Dependency locks, path ownership and the version row commit or roll
+	// back together: a rejected registration leaves no dirty data.
+	for _, d := range deps {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO version_deps (package_id, version, dep_package, dep_version, dep_hash)
+			VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (package_id, version, dep_package) DO NOTHING`,
+			pkgID, v.Version, d.DepPackage, d.DepVersion, d.DepHash); err != nil {
+			return false, fmt.Errorf("insert dependency lock: %w", err)
+		}
+	}
+	for _, path := range v.OwnedPaths {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO path_owners (path, package_id, version)
+			VALUES ($1, $2, $3)
+			ON CONFLICT (path)
+			DO UPDATE SET package_id = EXCLUDED.package_id, version = EXCLUDED.version, updated_at = now()`,
+			path, pkgID, v.Version); err != nil {
+			return false, fmt.Errorf("upsert path owner: %w", err)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -151,6 +174,117 @@ func (s *PGStore) ListVersions(ctx context.Context, pkg string) ([]Version, erro
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+func (s *PGStore) FindPathOwner(ctx context.Context, path string) (string, string, error) {
+	var pkg, version string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT p.name, o.version
+		FROM path_owners o JOIN packages p ON p.id = o.package_id
+		WHERE o.path = $1`, path).Scan(&pkg, &version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", ErrNotFound
+	}
+	if err != nil {
+		return "", "", err
+	}
+	return pkg, version, nil
+}
+
+func (s *PGStore) GetDeps(ctx context.Context, pkg, version string) ([]DepLock, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT d.dep_package, d.dep_version, d.dep_hash
+		FROM version_deps d JOIN packages p ON p.id = d.package_id
+		WHERE p.name = $1 AND d.version = $2
+		ORDER BY d.dep_package`, pkg, version)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DepLock
+	for rows.Next() {
+		var d DepLock
+		if err := rows.Scan(&d.DepPackage, &d.DepVersion, &d.DepHash); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func (s *PGStore) Dependents(ctx context.Context, pkg string) ([]DependentEdge, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT p.name, d.version, d.dep_version
+		FROM version_deps d JOIN packages p ON p.id = d.package_id
+		WHERE d.dep_package = $1
+		ORDER BY p.name, d.version`, pkg)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DependentEdge
+	for rows.Next() {
+		var e DependentEdge
+		if err := rows.Scan(&e.Package, &e.Version, &e.DepVersion); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *PGStore) GetImpactAnalysis(ctx context.Context, pkg, base, head string) (*StoredImpact, error) {
+	var a StoredImpact
+	var result []byte
+	err := s.db.QueryRowContext(ctx, `
+		SELECT p.name, a.base_version, a.head_version, a.input_hash, a.result, a.created_at
+		FROM impact_analyses a JOIN packages p ON p.id = a.package_id
+		WHERE p.name = $1 AND a.base_version = $2 AND a.head_version = $3`, pkg, base, head).
+		Scan(&a.Package, &a.BaseVersion, &a.HeadVersion, &a.InputHash, &result, &a.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	a.Result = &ImpactResult{}
+	if err := json.Unmarshal(result, a.Result); err != nil {
+		return nil, fmt.Errorf("decode impact analysis: %w", err)
+	}
+	return &a, nil
+}
+
+func (s *PGStore) PutImpactAnalysis(ctx context.Context, a StoredImpact) (bool, error) {
+	body, err := json.Marshal(a.Result)
+	if err != nil {
+		return false, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	pkgID, err := s.ensurePackage(ctx, tx, a.Package)
+	if err != nil {
+		return false, err
+	}
+	var id int64
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO impact_analyses (package_id, base_version, head_version, input_hash, result)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (package_id, base_version, head_version) DO NOTHING
+		RETURNING id`, pkgID, a.BaseVersion, a.HeadVersion, a.InputHash, body).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Same input was analyzed concurrently; the stored row wins.
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("insert impact analysis: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *PGStore) PutReport(ctx context.Context, rep StoredReport) error {

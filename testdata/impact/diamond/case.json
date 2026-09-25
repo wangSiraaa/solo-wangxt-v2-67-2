@@ -1,0 +1,40 @@
+{
+  "name": "diamond",
+  "description": "Diamond dependency: top reaches base through mid and side. A breaking change in base must produce exactly one record for top with both reason paths.",
+  "registrations": [
+    {"package": "acme.base", "version": "v1", "dir": "base_v1"},
+    {"package": "acme.mid", "version": "v1", "dir": "mid_v1"},
+    {"package": "acme.side", "version": "v1", "dir": "side_v1"},
+    {"package": "acme.top", "version": "v1", "dir": "top_v1"},
+    {"package": "acme.base", "version": "v2", "dir": "base_v2"}
+  ],
+  "analyze": {"package": "acme.base", "base_version": "v1", "head_version": "v2"},
+  "expect": {
+    "verdict": "INCOMPATIBLE",
+    "impacts": [
+      {
+        "package": "acme.mid", "impact": "DIRECT",
+        "reason_paths": [["acme.base", "acme.mid"]],
+        "findings": [{"code": "FIELD_TYPE_CHANGED", "path": "acme.base.Shared.amount"}]
+      },
+      {
+        "package": "acme.side", "impact": "DIRECT",
+        "reason_paths": [["acme.base", "acme.side"]],
+        "findings": [{"code": "FIELD_TYPE_CHANGED", "path": "acme.base.Shared.amount"}]
+      },
+      {
+        "package": "acme.top", "impact": "TRANSITIVE",
+        "reason_paths": [
+          ["acme.base", "acme.mid", "acme.top"],
+          ["acme.base", "acme.side", "acme.top"]
+        ],
+        "findings": [{"code": "FIELD_TYPE_CHANGED", "path": "acme.base.Shared.amount"}]
+      }
+    ],
+    "dependencies": {
+      "acme.mid@v1": ["acme.base@v1"],
+      "acme.side@v1": ["acme.base@v1"],
+      "acme.top@v1": ["acme.mid@v1", "acme.side@v1"]
+    }
+  }
+}

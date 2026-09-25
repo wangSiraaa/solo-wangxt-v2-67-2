@@ -1,0 +1,5 @@
+syntax = "proto3";
+package acme.mid;
+import "base/common.proto";
+message Line { acme.base.Money amount = 1; }
+message Invoice { Line line = 1; }

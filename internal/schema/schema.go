@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 
 	"github.com/bufbuild/protocompile"
@@ -40,11 +41,29 @@ type Compiled struct {
 	Files *protoregistry.Files
 }
 
+// FileProvider supplies already-compiled dependency files by import path.
+// It is how cross-package dependencies are resolved: the registry pins
+// each import to an immutable registered version and serves the pinned
+// FileDescriptorProto from that version's stored descriptor set.
+type FileProvider interface {
+	// FindFile returns the pinned FileDescriptorProto for path, or
+	// (nil, nil) when the path is unknown to the provider.
+	FindFile(ctx context.Context, path string) (*descriptorpb.FileDescriptorProto, error)
+}
+
 // Compile parses and links the given sources. Every import must be
 // resolvable from the submitted files themselves or from the standard
 // well-known types; nested and diamond imports are handled by the
 // compiler. Compilation errors are returned with file:line:col positions.
 func Compile(ctx context.Context, files []SourceFile) (*Compiled, error) {
+	return CompileWithProvider(ctx, files, nil)
+}
+
+// CompileWithProvider is Compile with an additional FileProvider consulted
+// after the submitted sources (well-known types still win over both). The
+// provider supplies pinned dependency files; imports it cannot supply fail
+// the compilation as unresolved.
+func CompileWithProvider(ctx context.Context, files []SourceFile, provider FileProvider) (*Compiled, error) {
 	if len(files) == 0 {
 		return nil, errors.New("schema: no source files submitted")
 	}
@@ -62,10 +81,26 @@ func Compile(ctx context.Context, files []SourceFile) (*Compiled, error) {
 	}
 	sort.Strings(entrypoints)
 
-	compiler := protocompile.Compiler{
-		Resolver: protocompile.WithStandardImports(&protocompile.SourceResolver{
+	resolvers := protocompile.CompositeResolver{
+		&protocompile.SourceResolver{
 			Accessor: protocompile.SourceAccessorFromMap(srcs),
-		}),
+		},
+	}
+	if provider != nil {
+		resolvers = append(resolvers, protocompile.ResolverFunc(func(path string) (protocompile.SearchResult, error) {
+			fdp, err := provider.FindFile(ctx, path)
+			if err != nil {
+				return protocompile.SearchResult{}, err
+			}
+			if fdp == nil {
+				return protocompile.SearchResult{}, os.ErrNotExist
+			}
+			return protocompile.SearchResult{Proto: fdp}, nil
+		}))
+	}
+
+	compiler := protocompile.Compiler{
+		Resolver:       protocompile.WithStandardImports(resolvers),
 		SourceInfoMode: protocompile.SourceInfoStandard,
 	}
 	linked, err := compiler.Compile(ctx, entrypoints...)
@@ -92,14 +127,25 @@ func Compile(ctx context.Context, files []SourceFile) (*Compiled, error) {
 		add(fd)
 	}
 
-	// Content hash: canonical bytes of every file, sorted by path so the
-	// hash is independent of entrypoint order.
+	// Content hash: canonical bytes of every OWNED file, sorted by path so
+	// the hash is independent of entrypoint order. Dependency files pulled
+	// in through a FileProvider are environment, pinned by dependency
+	// locks — they are not part of the package's own identity, so
+	// re-registering identical own-content stays idempotent even after a
+	// dependency published a new version.
+	owned := make(map[string]bool, len(entrypoints))
+	for _, p := range entrypoints {
+		owned[p] = true
+	}
 	type fileBytes struct {
 		path string
 		data []byte
 	}
-	canonical := make([]fileBytes, 0, len(fdset.File))
+	canonical := make([]fileBytes, 0, len(entrypoints))
 	for _, fdp := range fdset.File {
+		if !owned[fdp.GetName()] {
+			continue
+		}
 		b, err := proto.MarshalOptions{Deterministic: true}.Marshal(fdp)
 		if err != nil {
 			return nil, fmt.Errorf("schema: canonicalize %s: %w", fdp.GetName(), err)

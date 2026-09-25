@@ -1,0 +1,24 @@
+{
+  "name": "pinned_repro",
+  "description": "mid v1 locked base v1; base v2 is published afterwards; mid v2 registered later locks base v2. Historical locks never move (mid@v1 still points at base v1), the latest mid already tracks head so it is verified unaffected, and the analysis is computed once then reused (asserted by the runner for every case).",
+  "registrations": [
+    {"package": "acme.base", "version": "v1", "dir": "base_v1"},
+    {"package": "acme.mid", "version": "v1", "dir": "mid_v1"},
+    {"package": "acme.base", "version": "v2", "dir": "base_v2"},
+    {"package": "acme.mid", "version": "v2", "dir": "mid_v2"}
+  ],
+  "analyze": {"package": "acme.base", "base_version": "v1", "head_version": "v2"},
+  "expect": {
+    "verdict": "INCOMPATIBLE",
+    "impacts": [
+      {
+        "package": "acme.mid", "impact": "VERIFIED_UNAFFECTED",
+        "reason_paths": [["acme.base", "acme.mid"]]
+      }
+    ],
+    "dependencies": {
+      "acme.mid@v1": ["acme.base@v1"],
+      "acme.mid@v2": ["acme.base@v2"]
+    }
+  }
+}

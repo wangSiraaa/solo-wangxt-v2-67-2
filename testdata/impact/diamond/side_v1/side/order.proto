@@ -1,0 +1,4 @@
+syntax = "proto3";
+package acme.side;
+import "base/common.proto";
+message Order { acme.base.Shared shared = 1; }

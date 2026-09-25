@@ -1,0 +1,4 @@
+syntax = "proto3";
+package acme.top;
+import "mid/invoice.proto";
+message Report { acme.mid.Invoice invoice = 1; }

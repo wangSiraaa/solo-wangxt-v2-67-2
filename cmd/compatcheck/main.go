@@ -1,10 +1,13 @@
 // Command compatcheck is the CLI front-end for the compatibility checker.
 //
-//	compatcheck run <cases-dir>                      run regression cases
+//	compatcheck run <cases-dir>                      run compatibility regression cases
+//	compatcheck impact <cases-dir>                   run dependency-lock / impact-analysis cases
 //	compatcheck check -old <dir> -new <dir>          ad-hoc comparison, JSON report
 //
-// Regression cases live in directories with old/ and new/ proto trees and
-// a case.json expectation file; see testdata/cases.
+// Compatibility cases live in directories with old/ and new/ proto trees
+// and a case.json expectation file (see testdata/cases). Impact cases
+// describe a sequence of cross-package registrations plus an expected
+// impact analysis (see testdata/impact).
 package main
 
 import (
@@ -27,6 +30,8 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		os.Exit(runCases(os.Args[2:]))
+	case "impact":
+		os.Exit(runImpact(os.Args[2:]))
 	case "check":
 		os.Exit(checkTrees(os.Args[2:]))
 	default:
@@ -37,7 +42,8 @@ func main() {
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `usage:
-  compatcheck run <cases-dir>                 run all regression cases under a directory
+  compatcheck run <cases-dir>                 run all compatibility regression cases under a directory
+  compatcheck impact <cases-dir>              run all dependency-lock / impact-analysis cases under a directory
   compatcheck check -old DIR -new DIR [-samples FILE.json] [-format json|text]
                                               compare two proto trees directly
 `)
@@ -71,6 +77,43 @@ func runCases(args []string) int {
 		if *verbose {
 			out, _ := json.MarshalIndent(res.Report, "     ", "  ")
 			fmt.Printf("     report: %s\n", out)
+		}
+	}
+	fmt.Printf("%d passed, %d failed\n", passed, failed)
+	if failed > 0 {
+		return 1
+	}
+	return 0
+}
+
+func runImpact(args []string) int {
+	fs := flag.NewFlagSet("impact", flag.ExitOnError)
+	verbose := fs.Bool("v", false, "print full analysis for failing cases")
+	_ = fs.Parse(args)
+	if fs.NArg() != 1 {
+		usage()
+		return 2
+	}
+	results, err := regress.RunImpactDir(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 2
+	}
+	passed, failed := 0, 0
+	for _, res := range results {
+		if res.Passed {
+			passed++
+			fmt.Printf("PASS %s\n", res.Case.Name)
+			continue
+		}
+		failed++
+		fmt.Printf("FAIL %s\n", res.Case.Name)
+		for _, p := range res.Problems {
+			fmt.Printf("     - %s\n", p)
+		}
+		if *verbose && res.Response != nil {
+			out, _ := json.MarshalIndent(res.Response, "     ", "  ")
+			fmt.Printf("     analysis: %s\n", out)
 		}
 	}
 	fmt.Printf("%d passed, %d failed\n", passed, failed)

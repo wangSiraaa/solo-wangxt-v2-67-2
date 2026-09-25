@@ -80,3 +80,86 @@ type ListVersionsResponse struct {
 	Package  string        `json:"package"`
 	Versions []VersionMeta `json:"versions"`
 }
+
+// --- cross-package dependency locking & transitive impact analysis ---
+
+// Impact classification of one dependent package version.
+const (
+	// ImpactDirect: the package directly locked the changed package and
+	// the change could not be proven safe for it.
+	ImpactDirect = "DIRECT"
+	// ImpactTransitive: the package reaches the changed package through
+	// at least one intermediate dependency and is affected.
+	ImpactTransitive = "TRANSITIVE"
+	// ImpactVerifiedUnaffected: the package depends on the changed
+	// package, but every finding was verified irrelevant to the symbols
+	// it actually references.
+	ImpactVerifiedUnaffected = "VERIFIED_UNAFFECTED"
+)
+
+// LockedDep is one pinned dependency as reported by the API.
+type LockedDep struct {
+	Package     string `json:"package"`
+	Version     string `json:"version"`
+	ContentHash string `json:"content_hash"` // hex digest captured when the lock was taken
+}
+
+// PathHop is one step of a reason path: a package at the version that
+// participates in the dependency chain.
+type PathHop struct {
+	Package string `json:"package"`
+	Version string `json:"version"`
+}
+
+// ReasonPath is one dependency chain from the changed package to an
+// affected package. Diamond dependencies yield several reason paths for
+// the same affected package.
+type ReasonPath struct {
+	Hops []PathHop `json:"hops"`
+}
+
+// PackageImpact is the analysis verdict for one dependent package. Each
+// dependent appears at most once, however many reason paths lead to it.
+type PackageImpact struct {
+	Package string `json:"package"`
+	// Version is the dependent version that was evaluated (the latest
+	// registered version still holding a lock on the chain).
+	Version     string           `json:"version"`
+	Impact      string           `json:"impact"` // DIRECT | TRANSITIVE | VERIFIED_UNAFFECTED
+	ReasonPaths []ReasonPath     `json:"reason_paths"`
+	Findings    []compat.Finding `json:"findings,omitempty"`
+}
+
+// ImpactResult is the persistable outcome of one analysis.
+type ImpactResult struct {
+	Report  *compat.Report  `json:"report"`
+	Impacts []PackageImpact `json:"impacts"`
+}
+
+type AnalyzeImpactRequest struct {
+	Package     string `json:"package"`
+	BaseVersion string `json:"base_version"`
+	HeadVersion string `json:"head_version"`
+}
+
+type AnalyzeImpactResponse struct {
+	Package     string          `json:"package"`
+	BaseVersion string          `json:"base_version"`
+	HeadVersion string          `json:"head_version"`
+	Report      *compat.Report  `json:"report"`
+	Impacts     []PackageImpact `json:"impacts"`
+	// Reused is true when the stored analysis for exactly this input was
+	// returned instead of recomputing it.
+	Reused bool `json:"reused"`
+}
+
+type ListDependenciesRequest struct {
+	Package string `json:"package"`
+	Version string `json:"version"`
+}
+
+type ListDependenciesResponse struct {
+	Package      string      `json:"package"`
+	Version      string      `json:"version"`
+	Dependencies []LockedDep `json:"dependencies"`
+}

@@ -1,0 +1,21 @@
+{
+  "name": "unaffected",
+  "description": "picky depends on base but only uses Other, which v2 does not touch: verified unaffected. solo never depends on base and upgrades itself: must not be reported at all.",
+  "registrations": [
+    {"package": "acme.base", "version": "v1", "dir": "base_v1"},
+    {"package": "acme.picky", "version": "v1", "dir": "picky_v1"},
+    {"package": "acme.solo", "version": "v1", "dir": "solo_v1"},
+    {"package": "acme.base", "version": "v2", "dir": "base_v2"},
+    {"package": "acme.solo", "version": "v2", "dir": "solo_v2"}
+  ],
+  "analyze": {"package": "acme.base", "base_version": "v1", "head_version": "v2"},
+  "expect": {
+    "verdict": "INCOMPATIBLE",
+    "impacts": [
+      {
+        "package": "acme.picky", "impact": "VERIFIED_UNAFFECTED",
+        "reason_paths": [["acme.base", "acme.picky"]]
+      }
+    ]
+  }
+}
