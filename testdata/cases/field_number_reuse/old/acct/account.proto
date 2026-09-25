@@ -1,0 +1,8 @@
+syntax = "proto3";
+package acme.account;
+
+message Account {
+  string id = 1;
+  string name = 2;
+  reserved 3;
+}

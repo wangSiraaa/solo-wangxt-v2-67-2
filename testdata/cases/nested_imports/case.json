@@ -1,0 +1,10 @@
+{
+  "name": "nested_imports",
+  "description": "A field rename buried in a transitively imported file (diamond: top imports middle and base) must surface with the fully-qualified message path.",
+  "expect": {
+    "verdict": "INCOMPATIBLE",
+    "findings": [
+      {"code": "FIELD_RENAMED", "path": "acme.common.Money.currency", "severity": "FAIL"}
+    ]
+  }
+}

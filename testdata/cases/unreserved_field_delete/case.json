@@ -1,0 +1,10 @@
+{
+  "name": "unreserved_field_delete",
+  "description": "fax_number is deleted without reserving its number; a future field could reuse #2 and silently misread old payloads.",
+  "expect": {
+    "verdict": "INCOMPATIBLE",
+    "findings": [
+      {"code": "FIELD_REMOVED_UNRESERVED", "path": "acme.settings.Settings.fax_number", "severity": "FAIL"}
+    ]
+  }
+}

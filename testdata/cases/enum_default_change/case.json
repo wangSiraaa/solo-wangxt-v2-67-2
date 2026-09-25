@@ -1,0 +1,12 @@
+{
+  "name": "enum_default_change",
+  "description": "The zero (default) enum value is renamed, a value is properly reserved away, a value is added to an open proto3 enum, and a value is added to a closed proto2 enum where old readers silently drop it.",
+  "expect": {
+    "verdict": "INCOMPATIBLE",
+    "findings": [
+      {"code": "ENUM_VALUE_RENAMED", "path": "acme.jobs.Status.STATUS_UNKNOWN", "severity": "FAIL"},
+      {"code": "ENUM_DEFAULT_VALUE_CHANGED", "path": "acme.jobs.Status.STATUS_UNKNOWN", "severity": "WARN"},
+      {"code": "ENUM_VALUE_ADDED", "path": "acme.legacy.LegacyState.LEGACY_ARCHIVED", "severity": "WARN"}
+    ]
+  }
+}

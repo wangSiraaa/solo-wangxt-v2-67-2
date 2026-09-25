@@ -1,0 +1,10 @@
+syntax = "proto3";
+package app;
+
+import "a/user.proto";
+import "b/user.proto";
+
+message App {
+  team.a.User a_user = 1;
+  team.b.User b_user = 2;
+}

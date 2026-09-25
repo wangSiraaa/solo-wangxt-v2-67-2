@@ -1,0 +1,12 @@
+{
+  "name": "oneof_migration",
+  "description": "Moving fields into a oneof (Contact) keeps wire numbers but cannot be proven safe: old payloads may set siblings together. Moving out of a oneof (Profile) relaxes semantics. Verdict must stay NEEDS_REVIEW, not pass.",
+  "expect": {
+    "verdict": "NEEDS_REVIEW",
+    "findings": [
+      {"code": "FIELD_MOVED_INTO_ONEOF", "path": "acme.user.Contact.email", "severity": "WARN"},
+      {"code": "FIELD_MOVED_INTO_ONEOF", "path": "acme.user.Contact.phone", "severity": "WARN"},
+      {"code": "ONEOF_REMOVED", "path": "acme.user.Profile.avatar", "severity": "WARN"}
+    ]
+  }
+}

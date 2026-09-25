@@ -1,0 +1,15 @@
+{
+  "name": "sample_payload",
+  "description": "int32 -> int64 is wire-safe but changes the JSON form from number to quoted string; submitted samples prove the JSON divergence.",
+  "samples": [
+    {"name": "json-counter", "message": "acme.metrics.Counter", "encoding": "json", "data": "{\"name\":\"hits\",\"count\":5}"},
+    {"name": "wire-counter", "message": "acme.metrics.Counter", "encoding": "wire", "data": "CgRoaXRzEAU="}
+  ],
+  "expect": {
+    "verdict": "INCOMPATIBLE",
+    "findings": [
+      {"code": "FIELD_TYPE_CHANGED", "path": "acme.metrics.Counter.count", "severity": "FAIL"},
+      {"code": "SAMPLE_JSON_MISMATCH", "path": "acme.metrics.Counter.count", "severity": "FAIL"}
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "type_change",
+  "description": "int32 -> int64 widens on the wire but changes JSON to a quoted string; string -> bytes changes JSON to base64; fixed32 -> sfixed32 is provably identical in both encodings (INFO only).",
+  "expect": {
+    "verdict": "INCOMPATIBLE",
+    "findings": [
+      {"code": "FIELD_TYPE_CHANGED", "path": "acme.m.M.a", "severity": "FAIL"},
+      {"code": "FIELD_TYPE_CHANGED", "path": "acme.m.M.b", "severity": "FAIL"}
+    ]
+  }
+}

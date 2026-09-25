@@ -1,0 +1,8 @@
+syntax = "proto3";
+package acme.m;
+
+message M {
+  int64 a = 1;
+  bytes b = 2;
+  sfixed32 c = 3;
+}

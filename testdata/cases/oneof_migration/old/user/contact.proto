@@ -1,0 +1,16 @@
+syntax = "proto3";
+package acme.user;
+
+message Contact {
+  string email = 1;
+  string phone = 2;
+  string address = 3;
+}
+
+message Profile {
+  oneof avatar {
+    string avatar_url = 1;
+    bytes avatar_data = 2;
+  }
+  string display_name = 3;
+}

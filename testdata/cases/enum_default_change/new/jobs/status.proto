@@ -1,0 +1,15 @@
+syntax = "proto3";
+package acme.jobs;
+
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_ACTIVE = 1;
+  reserved 2;
+  reserved "STATUS_PAUSED";
+  STATUS_BACKOFF = 3;
+}
+
+message Job {
+  string id = 1;
+  Status status = 2;
+}

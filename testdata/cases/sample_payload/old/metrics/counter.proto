@@ -1,0 +1,7 @@
+syntax = "proto3";
+package acme.metrics;
+
+message Counter {
+  string name = 1;
+  int32 count = 2;
+}

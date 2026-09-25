@@ -1,0 +1,12 @@
+{
+  "name": "field_number_reuse",
+  "description": "Number 2 moves from string name to int32 login_count (provable reuse), and reserved number 3 is un-reserved and reused for email.",
+  "expect": {
+    "verdict": "INCOMPATIBLE",
+    "findings": [
+      {"code": "FIELD_NUMBER_REUSED", "path": "acme.account.Account.name", "severity": "FAIL"},
+      {"code": "FIELD_USES_RESERVED_NUMBER", "path": "acme.account.Account.email", "severity": "WARN"},
+      {"code": "RESERVED_RANGE_REMOVED", "path": "acme.account.Account", "severity": "WARN"}
+    ]
+  }
+}

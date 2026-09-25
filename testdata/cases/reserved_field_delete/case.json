@@ -1,0 +1,10 @@
+{
+  "name": "reserved_field_delete",
+  "description": "email is deleted properly (number and name reserved) while phone reserves only the number; the unreserved JSON name cannot be proven safe, so the verdict is NEEDS_REVIEW.",
+  "expect": {
+    "verdict": "NEEDS_REVIEW",
+    "findings": [
+      {"code": "FIELD_REMOVED_NAME_UNRESERVED", "path": "acme.profile.Profile.phone", "severity": "WARN"}
+    ]
+  }
+}

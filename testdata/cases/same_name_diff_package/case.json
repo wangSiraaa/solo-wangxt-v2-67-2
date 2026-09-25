@@ -1,0 +1,10 @@
+{
+  "name": "same_name_diff_package",
+  "description": "team.a.User and team.b.User share a simple name. Only team.b.User.level changes (int32 -> string). Findings must attach to team.b.User and never to team.a.User.",
+  "expect": {
+    "verdict": "INCOMPATIBLE",
+    "findings": [
+      {"code": "FIELD_TYPE_CHANGED", "path": "team.b.User.level", "severity": "FAIL"}
+    ]
+  }
+}

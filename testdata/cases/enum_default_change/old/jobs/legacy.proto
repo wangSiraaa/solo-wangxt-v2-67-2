@@ -1,0 +1,12 @@
+syntax = "proto2";
+package acme.legacy;
+
+enum LegacyState {
+  LEGACY_NEW = 0;
+  LEGACY_DONE = 1;
+}
+
+message Task {
+  optional string id = 1;
+  optional LegacyState state = 2;
+}
